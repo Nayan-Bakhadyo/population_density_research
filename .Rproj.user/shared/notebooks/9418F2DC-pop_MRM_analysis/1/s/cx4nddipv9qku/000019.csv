@@ -1,0 +1,5 @@
+"0","# Convert 'Category' into a factor (or dummy variables if needed later)"
+"0","train_data$Category <- as.factor(train_data$Category)"
+"2","Error in `$<-.data.frame`(`*tmp*`, Category, value = integer(0)) : 
+  replacement has 0 rows, data has 130
+"

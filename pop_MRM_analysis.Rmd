@@ -1,0 +1,308 @@
+---
+title: "Population Density Research"
+author: "Nayan Bakhadyo"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r libraries, include = FALSE}
+library('tidyverse')
+library('ggplot2')
+library('car')
+
+population_data <- read_csv('final_population_dataset.csv')
+
+
+```
+
+
+```{r scatterplot, echo=FALSE}
+par(mfrow = c(2,3))
+plot(total_pop ~ (Area), data = population_data)
+plot(total_pop ~ (Storey), data = population_data)
+plot(total_pop ~ (atm_access), data = population_data)
+plot(total_pop ~ hospital_a, data = population_data)
+
+```
+
+```{r model, echo=FALSE}
+#MRM for population estimation
+population_model <- lm(formula = (total_pop) ~ (Area) + (Built_up) + (Water) + (Bareland) + (Vegetation) +  Category + (public_roa) + (bank_acces) + (Road) + (atm_access) + (hospital_a) + (road_densi) + (Settlement) + (Department) + (super_stor) + Storey, data = population_data)
+
+# Display the summary of the model
+model_summary <- summary(population_model)
+model_summary
+plot(population_model)
+# Extract the Residual Standard Error (s)
+s <- model_summary$sigma
+print("S value:")
+
+# Calculate the mean of the log-transformed total population
+mean_log_pop <- mean((population_data$total_pop), na.rm = TRUE)
+
+# Calculate the Coefficient of Variation (CV)
+cv <- 100 * (s / mean_log_pop)
+print("CV:")
+cv
+
+population_data %>% 
+  select(-total_pop, -Category) %>% 
+  cor()
+
+population_data2 <- s
+vif(population_data)
+```
+```{r residuals, echo=FALSE}
+#Check Assumptions
+plot(population_model)
+```
+```{r RF packages, echo=FALSE}
+
+# Load libraries
+library(randomForest)
+library(caret)
+
+```
+Data preparation:
+```{r Data Preparation, echo=FALSE}
+# Convert 'Category' into a factor (or dummy variables if needed later)
+train_data$Category <- as.factor(train_data$Category)
+test_data$Category <- as.factor(test_data$Category)
+
+# Separate features and target variable
+train_features <- train_data[, setdiff(names(train_data), "total_pop")]
+test_features <- test_data[, setdiff(names(test_data), "total_pop")]
+
+# Separate numeric and categorical columns
+numeric_columns <- sapply(train_features, is.numeric)
+categorical_columns <- !numeric_columns
+
+# Scale only numeric columns
+train_features_scaled <- train_features
+train_features_scaled[, numeric_columns] <- scale(train_features[, numeric_columns])
+
+# Scale test data using training set parameters for numeric columns
+test_features_scaled <- test_features
+test_features_scaled[, numeric_columns] <- scale(test_features[, numeric_columns], 
+                                                 center = attr(train_features_scaled[, numeric_columns], "scaled:center"), 
+                                                 scale = attr(train_features_scaled[, numeric_columns], "scaled:scale"))
+
+# Ensure categorical columns remain unchanged
+train_features_scaled[, categorical_columns] <- train_features[, categorical_columns]
+test_features_scaled[, categorical_columns] <- test_features[, categorical_columns]
+
+
+```
+Random Forest Training:
+```{r RF Training, echo=FALSE}
+# Combine scaled features with the target variable
+train_data_scaled <- cbind(as.data.frame(train_features_scaled), total_pop = train_target)
+test_data_scaled <- cbind(as.data.frame(test_features_scaled), total_pop = test_target)
+
+# Train the Random Forest model using scaled training data
+population_model_rf <- randomForest(total_pop ~ ., data = train_data_scaled, ntree = 500)
+
+# Check model summary
+print(population_model_rf)
+
+
+```
+Random Forest model metrics:
+```{r RF metrics, echo=FALSE}
+# Predict on test data
+rf_predictions <- predict(population_model_rf, newdata = test_data)
+
+# Calculate Mean Squared Error (MSE) and R-squared
+mse_rf <- mean((rf_predictions - test_data$total_pop)^2)
+r_squared_rf <- 1 - (sum((rf_predictions - test_data$total_pop)^2) / 
+                     sum((mean(train_data$total_pop) - test_data$total_pop)^2))
+
+cat("Random Forest MSE:", mse_rf, "\n")
+cat("Random Forest R-squared:", r_squared_rf, "\n")
+
+
+```
+
+```{r RF output, echo=FALSE}
+# Predict on new test data (if available)
+new_test_data <- test_data  # Replace with your actual test dataset
+new_predictions_rf <- predict(population_model_rf, newdata = new_test_data)
+new_predictions_rf
+
+```
+XGBoost model:
+```{r XGBoost libraries, echo=FALSE}
+# Load libraries
+library(xgboost)
+library(caret)
+library(fastDummies)
+
+```
+XGBoost Data Prep
+```{r Data prep, echo=FALSE}
+# Separate numeric and categorical features
+numeric_cols <- sapply(population_data, is.numeric)
+categorical_cols <- !numeric_cols
+
+# Scale (normalize) numeric features
+population_data_numeric_scaled <- as.data.frame(scale(population_data[, numeric_cols]))
+
+# One-hot encode categorical features
+dummies <- dummyVars("~ .", data = population_data[, categorical_cols], fullRank = TRUE)
+population_data_categorical_encoded <- as.data.frame(predict(dummies, newdata = population_data[, categorical_cols]))
+
+# Combine the scaled numeric data with the one-hot encoded categorical data
+population_data_scaled <- cbind(population_data_numeric_scaled, population_data_categorical_encoded)
+
+# Add the target variable (total_pop) back to the dataset
+population_data_scaled$total_pop <- population_data$total_pop
+
+
+```
+XGBoost Data Split
+```{r XGBoost Data Split, echo=FALSE}
+# Set seed for reproducibility
+set.seed(123)
+
+# Split data into training (80%) and testing (20%)
+train_indices <- createDataPartition(population_data_scaled$total_pop, p = 0.8, list = FALSE)
+train_data <- population_data_scaled[train_indices, ]
+test_data <- population_data_scaled[-train_indices, ]
+
+
+```
+XGBoost Training
+```{r XGBoost Training, echo=FALSE}
+# Convert training data to a matrix (XGBoost requires matrix format)
+train_matrix <- as.matrix(train_data[, -ncol(train_data)])  # Exclude the target variable
+train_label <- train_data$total_pop
+
+# Convert testing data to a matrix
+test_matrix <- as.matrix(test_data[, -ncol(test_data)])
+test_label <- test_data$total_pop
+
+# Create DMatrix objects for XGBoost
+dtrain <- xgb.DMatrix(data = train_matrix, label = train_label)
+dtest <- xgb.DMatrix(data = test_matrix, label = test_label)
+
+# Define parameters for XGBoost
+params <- list(
+  booster = "gbtree",
+  objective = "reg:squarederror",  # For regression
+  eta = 0.1,                       # Learning rate
+  max_depth = 6,                   # Maximum depth of trees
+  subsample = 0.8,                 # Subsampling ratio of training data
+  colsample_bytree = 0.8           # Subsampling ratio of columns
+)
+
+# Train the XGBoost model
+xgb_model <- xgb.train(params = params, data = dtrain, nrounds = 100, watchlist = list(train = dtrain, test = dtest), early_stopping_rounds = 10, verbose = 0)
+
+# Predict on test data
+pred_xgb <- predict(xgb_model, newdata = dtest)
+
+```
+XGBoost Performance
+```{r XGBoost Performance, echo=FALSE}
+# Calculate Mean Squared Error (MSE)
+mse_xgb <- mean((pred_xgb - test_label)^2)
+
+# Calculate R-squared
+sst <- sum((test_label - mean(test_label))^2)  # Total sum of squares
+sse <- sum((pred_xgb - test_label)^2)          # Sum of squared errors
+r_squared_xgb <- 1 - (sse / sst)
+
+# Print metrics
+cat("XGBoost MSE:", mse_xgb, "\n")
+cat("XGBoost R-squared:", r_squared_xgb, "\n")
+
+```
+XGBoost on test data
+```{r XGBoost on Test Data, echo=FALSE}
+# Predict on the test dataset
+pred_xgb_test <- predict(xgb_model, newdata = dtest)
+
+# Compute metrics for regression evaluation
+
+# Mean Absolute Error (MAE)
+mae_xgb <- mean(abs(pred_xgb_test - test_label))
+
+# Mean Squared Error (MSE)
+mse_xgb <- mean((pred_xgb_test - test_label)^2)
+
+#MAPE
+mape <- mean(abs((pred_xgb_test - test_label) / test_label)) * 100  # MAPE in percentage
+
+# Compute accuracy as a percentage
+accuracy <- 100 - mape  # Accuracy percentage
+
+# Root Mean Squared Error (RMSE)
+rmse_xgb <- sqrt(mse_xgb)
+
+# R-squared
+sst <- sum((test_label - mean(test_label))^2)  # Total sum of squares
+sse <- sum((pred_xgb_test - test_label)^2)     # Sum of squared errors
+r_squared_xgb <- 1 - (sse / sst)
+
+# Print metrics
+cat("Mean Absolute Error (MAE):", mae_xgb, "\n")
+cat("Mean Squared Error (MSE):", mse_xgb, "\n")
+cat("Root Mean Squared Error (RMSE):", rmse_xgb, "\n")
+cat("R-squared:", r_squared_xgb, "\n")
+cat("MAPE:", mape, "\n")
+cat("Accuracy:", accuracy, "%\n")
+```
+
+```{r Save XGBoost, echo=FALSE}
+# Save the model to a binary file
+xgb.save(xgb_model, "Population_xgb_model2.bin")
+cat("Model saved as Population_xgb_model2.bin\n")
+```
+```{r RF overall, echo=FALSE}
+# Load necessary libraries
+library(caret)
+library(randomForest)
+library(Metrics)
+
+data <- read_csv('final_population_dataset.csv')
+
+# Normalize the dataset (excluding 'total_pop' and categorical variables)
+numeric_features <- sapply(data, is.numeric)
+numeric_features["total_pop"] <- FALSE  # Exclude target variable from normalization
+
+data[numeric_features] <- scale(data[numeric_features])
+
+# Splitting the data into train and test sets
+set.seed(123)
+trainIndex <- createDataPartition(data$total_pop, p = 0.8, list = FALSE)
+train_data <- data[trainIndex, ]
+test_data <- data[-trainIndex, ]
+
+# Train the Random Forest model
+rf_model <- randomForest(total_pop ~ ., data = train_data, ntree = 500, importance = TRUE)
+
+# Make predictions on the test data
+predictions <- predict(rf_model, newdata = test_data)
+
+# Calculate metrics
+mape_val <- mape(test_data$total_pop, predictions)
+accuracy <- sum(round(predictions) == test_data$total_pop) / nrow(test_data)
+
+# Print the results
+cat("MAPE:", mape_val, "\n")
+cat("Accuracy:", accuracy, "\n")
+
+# Additional metrics (RMSE, R-squared, etc.)
+rmse_val <- rmse(test_data$total_pop, predictions)
+r2_val <- cor(test_data$total_pop, predictions)^2
+
+cat("RMSE:", rmse_val, "\n")
+cat("R-squared:", r2_val, "\n")
+
+```
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

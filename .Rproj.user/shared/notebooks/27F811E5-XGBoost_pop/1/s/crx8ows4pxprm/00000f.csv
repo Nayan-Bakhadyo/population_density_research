@@ -1,0 +1,9 @@
+"0","# Save the model to a binary file"
+"0","xgb.save(xgb_model, ""Population_xgb_model2.bin"")"
+"1","[1]"
+"1"," TRUE"
+"1","
+"
+"0","cat(""Model saved as Population_xgb_model2.bin\n"")"
+"1","Model saved as Population_xgb_model2.bin
+"

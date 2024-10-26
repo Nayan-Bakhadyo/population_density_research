@@ -1,0 +1,47 @@
+library(xgboost)
+library(data.table) # For fread function
+
+population_data <- fread('final_population_dataset.csv') # Use fread for fast reading
+population_data$Storey <- NULL # Remove height column if necessary
+
+# Assuming total_pop is the target variable
+train_data <- population_data[, .(total_pop, Area_sqm, Water, Bareland, Vegetation, Built_up, public_roa, bank_acces, Road, atm_access, hospital_a, road_densi, Settlement, Department, super_stor, school_acc)]
+
+# Convert to matrix
+train_matrix <- as.matrix(train_data[, -1])  # Exclude the target variable
+train_label <- train_data$total_pop
+
+# Create DMatrix
+dtrain <- xgb.DMatrix(data = train_matrix, label = train_label)
+
+
+params <- list(
+  booster = "gbtree",
+  objective = "reg:squarederror",  # For regression
+  eta = 0.17805470445866273,        # Learning rate
+  max_depth = 8,                    # Maximum depth of trees
+  gamma = 0.01278105621936969,      # Minimum loss reduction required to make a further partition
+  min_child_weight = 6,             # Minimum sum of instance weight (hessian) needed in a child
+  subsample = 0.9359079020242138,   # Subsampling ratio of training data
+  colsample_bytree = 0.6647772113228527 # Subsampling ratio of columns
+)
+
+# Perform cross-validation
+cv_results <- xgb.cv(
+  params = params,
+  data = dtrain,
+  nrounds = 100,                     # Number of boosting rounds
+  nfold = 5,                         # Number of folds for cross-validation
+  metrics = "rmse",                  # Metric to evaluate
+  early_stopping_rounds = 10,        # Stop if no improvement in 10 rounds
+  verbose = 1                        # Print progress
+)
+
+# View CV results
+print(cv_results)
+
+# Get the best RMSE
+best_rmse <- min(cv_results$evaluation_log$test_rmse_mean)
+cat("Best RMSE from CV:", best_rmse, "\n")
+
+
